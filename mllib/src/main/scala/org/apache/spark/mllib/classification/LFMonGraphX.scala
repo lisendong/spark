@@ -73,10 +73,11 @@ class LFMonGraphX(
   def run(iterations: Int): Unit = {
     for (iter <- 1 to iterations) {
       val previousDataSet = dataSet
+      println("start train (Iteration:" + iter + ")")
       logInfo(s"Start train (Iteration $iter/$iterations)")
       val margin = forward()
       margin.setName(s"margin-$iter").persist(storageLevel)
-      //println(s"train (Iteration $iter/$iterations) cost : ${error(margin)}")
+      println(s"train (Iteration $iter/$iterations) cost : ${error(margin)}")
       var gradient = backward(margin)
       gradient.setName(s"gradient-$iter").persist(storageLevel)
 
@@ -102,17 +103,21 @@ class LFMonGraphX(
     new LogisticRegressionModel(new SDV(featureData), 0.0) //construct this model directly
   }
 
-//  private def error(q: VertexRDD[VD]): Double = {
-//    samples.join(q).map { case (_, (y, margin)) =>
+  private def error(q: VertexRDD[VD]): Double = {
+    samples.join(q).map { case (_, (y, m)) =>
 //      if (y > 0.0) {
 //        y - MLUtils.log1pExp(margin)
 //      } else {
 //        MLUtils.log1pExp(margin)
 //      }
-//    }.reduce(_ + _) / numSamples
-//  }
+      val pm = predict(m)
+      println(pm + ":" + y(0))
+      0.5 * (pm - y(0)) * (pm - y(0))
+    }.reduce(_ + _) / 1000
+  }
+
   private def forward_reduce(a : Array[Double], b : Array[Double]): Array[Double] = {
-    val result = Array[Double](a.length)
+    val result = new Array[Double](a.length)
     for (i <- 0 until a.length) {
       result(i) = a(i) + b(i)
     }
@@ -122,7 +127,8 @@ class LFMonGraphX(
     dataSet.aggregateMessages[Array[Double]](ctx => {
       // val sampleId = ctx.dstId
       // val featureId = ctx.srcId
-      val result = Array[Double](rank * 2 + 1)
+      //println("fuckrank:" + rank)
+      val result = new Array[Double](rank * 2 + 1)
       val x = ctx.attr
       val w = ctx.srcAttr
       result(0) = x * w(0)
@@ -136,7 +142,7 @@ class LFMonGraphX(
   }
 
   private def predict(arr : Array[Double]): Double = {
-    var result = 0
+    var result : Double = 0
     result += arr(0)
     for (i <- 1 to rank) {
       result += 0.5 * ( arr(i) * arr(i) - arr(2*i))
@@ -144,7 +150,7 @@ class LFMonGraphX(
     result
   }
   private def sum(arr : Array[Double]) : Double = {
-    var result = 0
+    var result : Double = 0
     for (i <- 1 to rank) {
       result += arr(i)
     }
@@ -152,15 +158,23 @@ class LFMonGraphX(
   }
 
   private def backward(q: VertexRDD[VD]): VertexRDD[Array[Double]] = {
+    //println("samples number:" + samples.count())
+    //println("predict number:" + q.count())
     val multiplier = samples.innerJoin(q) { (_, y, m) =>
       Array(sum(m), predict(m) - y(0))
     }
-    val tmp : Graph[VD, ED] = GraphImpl(multiplier, dataSet.edges).outerJoinVertices(features) { (vid, data, deg) =>
-      deg match {
-        case Some(i) => i
-        case None => data
+    //println("dataSet edges number:" + dataSet.edges.count())
+    //println("dataSet vertex number:" + dataSet.vertices.count())
+    //println("feature vertex number:" + features.count())
+    val tmp : Graph[VD, ED] = dataSet.outerJoinVertices(multiplier) {(vid, data, deg) =>
+      deg.getOrElse(data)
       }
-    }
+//    val tmp : Graph[VD, ED] = GraphImpl(multiplier, dataSet.edges).outerJoinVertices(features) { (vid, data, deg) =>
+//      println("vid:" + vid)
+//      deg.getOrElse(data)
+//    }
+    //println("tmp edges number:" + tmp.edges.count())
+    //println("tmp vertex number:" + tmp.vertices.count())
      tmp.aggregateMessages[Array[Double]](ctx => {
       // val sampleId = ctx.dstId
       // val featureId = ctx.srcId
@@ -169,22 +183,24 @@ class LFMonGraphX(
       val sum_m = summAndMulti(0)
       val multi = summAndMulti(1)
       //val grad = x * m
-      val m = Array[Double](rank + 1)
+      val m = new Array[Double](rank + 1)
+       //println(ctx.srcAttr.mkString(","))
+       val vfeatures : Array[Double] = ctx.srcAttr
       m(0) = x * multi
       for (i <- 1 to rank) {
-        val grad = sum_m * x - ctx.srcAttr(i) * x * x
+        val grad = sum_m * x - vfeatures(i) * x * x
         m(i) = grad * multi
       }
       ctx.sendToSrc(m) // send the multi directly
     }, forward_reduce, TripletFields.All).mapValues { gradients =>
-      gradients.map(_ / numSamples)// / numSamples
+      gradients.map(_ / 1000) //numSamples)// / numSamples
     }
   }
 
   // Updater for L1 regularized problems
   private def updateWeight(delta: VertexRDD[Array[Double]], iter: Int): Graph[VD, ED] = {
     //val thisIterStepSize = if (useAdaGrad) stepSize else stepSize / sqrt(iter)
-    val thisIterStepSize = stepSize
+    val thisIterStepSize = stepSize / sqrt(iter)
     val thisIterL1StepSize = stepSize / sqrt(iter)
     val newVertices = dataSet.vertices.leftJoin(delta) { (_, attr, gradient) =>
       gradient match {
@@ -232,8 +248,8 @@ object LFMonGraphX {
     rank : Int,
     storageLevel: StorageLevel = StorageLevel.MEMORY_AND_DISK): LogisticRegressionModel = {
     val data = input.zipWithIndex().map { case (LabeledPoint(label, features), id) =>
-      //val newLabel = if (label > 0.0) 1.0 else 0.0
-      (id, LabeledPoint(label, features)) // from zero
+      val newLabel = if (label > 0.0) 1.0 else 0.0
+      (id, LabeledPoint(newLabel, features)) // from zero
     }
     val lfm = new LFMonGraphX(data, stepSize, regw, regv, rank, storageLevel)
     lfm.run(numIterations)
@@ -277,7 +293,9 @@ object LFMonGraphX {
           Array.fill(1)(i) //label point
         }
         case None => {
-          Array.fill(rank + 1)(Utils.random.nextGaussian() * 1e-2) //parameter point
+          val a = Array.fill(rank + 1)(Utils.random.nextGaussian() * 1e-2) //parameter point
+          println(a.mkString(","))
+          a
         }
       }
       //deg.getOrElse(Utils.random.nextGaussian() * 1e-2) //initialize all the weights to gaussion() * 1e-2
@@ -295,6 +313,9 @@ object LFMonGraphX {
  * Degree-Based Hashing, the paper:
  * Distributed Power-law Graph Computing: Theoretical and Empirical Analysis
  */
+
+
+/*
 private class DBHPartitioner(val partitions: Int) extends Partitioner {
   val mixingPrime: Long = 1125899906842597L
 
@@ -330,3 +351,4 @@ private class DBHPartitioner(val partitions: Int) extends Partitioner {
 
   override def hashCode: Int = numPartitions
 }
+*/

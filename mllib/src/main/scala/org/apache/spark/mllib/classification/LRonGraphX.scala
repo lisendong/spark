@@ -113,11 +113,13 @@ class LRonGraphX(
 
   private def error(q: VertexRDD[VD]): Double = {
     samples.join(q).map { case (_, (y, margin)) =>
-      if (y > 0.0) {
-        MLUtils.log1pExp(margin)
-      } else {
-        MLUtils.log1pExp(margin) - margin
-      }
+//      if (y > 0.0) {
+//        MLUtils.log1pExp(margin)
+//      } else {
+//        MLUtils.log1pExp(margin) - margin
+//      }
+      val r = (1.0 / (1.0 + math.exp(margin)))
+      0.5 * (y - r) * (y - r)
     }.reduce(_ + _) / numSamples
   }
 

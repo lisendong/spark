@@ -29,12 +29,15 @@ class LRonGraphXSuite extends FunSuite with LocalClusterSparkContext with Matche
   test("10M dataSet") {
 
     val sparkHome = sys.props.getOrElse("spark.test.home", fail("spark.test.home is not set!"))
-    val dataSetFile = s"${sparkHome}/data/mllib/trainingset.10M.txt"
+    val dataSetFile = s"${sparkHome}/data/mllib/lr_data.txt"
     // val dataSetFile = s"${sparkHome}/data/mllib/kdda.10m.txt"
     // val dataSetFile = s"${sparkHome}/data/mllib/url_combined.10m.txt"
-    val dataSet = MLUtils.loadLibSVMFile(sc, dataSetFile)
+   // val dataSet = MLUtils.loadLibSVMFile(sc, dataSetFile)
 
-
+    val dataSet = sc.textFile(dataSetFile).map{line =>
+      val parts = line.split(" ")
+      LabeledPoint(parts(0).toDouble, Vectors.dense(parts.slice(1, parts.length).map(_.toDouble)))
+    }
     //    val dataSetFile = s"/input/lbs/recommend/kdda/*"
     //    val dataSetFile = s"/input/lbs/recommend/url_combined/*"
     //    val dataSetFile = "/input/lbs/recommend/trainingset/*"
