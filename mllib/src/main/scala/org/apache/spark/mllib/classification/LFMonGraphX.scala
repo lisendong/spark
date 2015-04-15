@@ -76,9 +76,7 @@ class LFMonGraphX(
     dataSet.vertices.filter(t => t._1 >= 0)
   }
 
-  // Modified Iterative Scaling, the paper:
-  // A comparison of numerical optimizers for logistic regression
-  // http://research.microsoft.com/en-us/um/people/minka/papers/logreg/minka-logreg.pdf
+  // Factorization Machines
   def run(iterations: Int): Unit = {
     for (iter <- 1 to iterations) {
       val previousDataSet = dataSet
